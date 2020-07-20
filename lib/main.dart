@@ -32,10 +32,8 @@ class MapSampleState extends State<MapSample> {
   Completer<GoogleMapController> _controller = Completer();
   LocationData currentLocation;
   Location location;
-  CameraPosition initialCameraPosition = CameraPosition(
-    target: LatLng(43.682823, -79.359917),
-    zoom: 14.4746,
-  );
+  CameraPosition initialCameraPosition;
+  Set<Marker> _markers = {};
 
   @override
   void initState() {
@@ -49,24 +47,35 @@ class MapSampleState extends State<MapSample> {
 
   void _setInitialLocation() async {
     currentLocation = await location.getLocation();
+    // target: LatLng(43.682823, -79.359917)
     setState(() {
       initialCameraPosition = CameraPosition(
         target: LatLng(currentLocation.latitude, currentLocation.longitude),
+        zoom: 15,
       );
     });
+
+    _markers.add(Marker(
+      markerId: MarkerId('myhome'),
+      position: LatLng(43.682823, -79.359917), // updated position
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
-    print(initialCameraPosition);
     return new Scaffold(
-      body: GoogleMap(
-        mapType: MapType.normal,
-        initialCameraPosition: initialCameraPosition,
-        onMapCreated: (GoogleMapController controller) {
-          _controller.complete(controller);
-        },
-      ),
+      body: currentLocation != null
+          ? GoogleMap(
+              mapType: MapType.normal,
+              initialCameraPosition: initialCameraPosition,
+              onMapCreated: (GoogleMapController controller) {
+                _controller.complete(controller);
+              },
+              markers: _markers,
+            )
+          : Center(
+              child: CircularProgressIndicator(),
+            ),
     );
   }
 }
