@@ -8,7 +8,9 @@ import 'package:get/route_manager.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:map_study/models/autocompleteResult.dart';
 import 'package:map_study/models/place.dart';
+import 'package:map_study/models/placeDetail.dart';
 import 'package:map_study/widgets/credentials.dart';
+import 'package:uuid/uuid.dart';
 
 void main() {
   runApp(MyApp());
@@ -37,96 +39,107 @@ class MyHomeScreen extends StatefulWidget {
 }
 
 class _MyHomeScreenState extends State<MyHomeScreen> {
-  Future<Position> _currentLocation() async {
+  Location _currentLocation;
+  CameraPosition initialCameraPosition;
+  GoogleMapController _controller;
+
+  Map<String, Marker> _markers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
+  }
+
+  void _getCurrentLocation() async {
     Position position = await Geolocator()
         .getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    return position;
+    print('🔥🔥🔥');
+    print(position);
+    setState(() {
+      _currentLocation = Location(
+        lat: position.latitude,
+        lng: position.longitude,
+      );
+      initialCameraPosition = CameraPosition(
+        target: LatLng(_currentLocation.lat, _currentLocation.lng),
+        zoom: 17,
+      );
+    });
+  }
+
+  void _setPosition(Location location) {
+    setState(
+      () {
+        _currentLocation = location;
+        _markers.clear();
+        final marker = Marker(
+          markerId: MarkerId("curr_loc"),
+          position: location.latlng,
+          infoWindow: InfoWindow(title: 'Your Location'),
+        );
+        _markers["Current Location"] = marker;
+      },
+    );
+    _moveCameraToPosition(location);
+  }
+
+  void _moveCameraToPosition(Location location) {
+    Future.delayed(new Duration(milliseconds: 100), () {
+      _controller.animateCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(
+          bearing: 0,
+          target: location.latlng,
+          zoom: initialCameraPosition.zoom,
+        ),
+      ));
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: FutureBuilder(
-        future: _currentLocation(),
-        builder: (context, AsyncSnapshot<Position> snapshot) {
-          print(snapshot);
-          if (snapshot.hasData) {
-            return Stack(
+      body: _currentLocation != null
+          ? Stack(
               children: <Widget>[
-                MyMap(
-                  currentLocation: snapshot.data,
-                ),
+                _buildGoogleMap(),
                 Align(
                   alignment: Alignment.topCenter,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 16),
                     child: SearchPlace(
-                      onPressed: () {
-                        Get.to(
+                      onPressed: () async {
+                        PlaceDetail result = await Get.to(
                           SearchPlaceScreen(
-                            currentLocation: snapshot.data,
+                            currentLocation: _currentLocation,
                           ),
                           transition: Transition.upToDown,
                         );
+                        _setPosition(result.geometry.location);
                       },
                     ),
                   ),
                 ),
               ],
-            );
-          }
-          return Container(
-            child: Center(
-              child: CircularProgressIndicator(),
+            )
+          : Container(
+              child: Center(
+                child: CircularProgressIndicator(),
+              ),
             ),
-          );
-        },
-      ),
     );
   }
-}
 
-class MyMap extends StatefulWidget {
-  MyMap({
-    this.markers,
-    this.currentLocation,
-  });
-  final Set<Marker> markers;
-  final Position currentLocation;
-  @override
-  State<MyMap> createState() => MyMapState();
-}
-
-class MyMapState extends State<MyMap> {
-  Completer<GoogleMapController> _controller = Completer();
-
-  CameraPosition initialCameraPosition;
-
-  @override
-  void initState() {
-    initialCameraPosition = CameraPosition(
-      target: LatLng(
-          widget.currentLocation.latitude, widget.currentLocation.longitude),
-      zoom: 15,
-    );
-    super.initState();
-  }
-
-  // _markers.add(Marker(
-  //   markerId: MarkerId('myhome'),
-  //   position: LatLng(43.682823, -79.359917), // updated position
-  // ));
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildGoogleMap() {
     return GoogleMap(
       mapType: MapType.normal,
       initialCameraPosition: initialCameraPosition,
       onMapCreated: (GoogleMapController controller) {
-        _controller.complete(controller);
+        _controller = controller;
       },
-      markers: widget.markers,
+      tiltGesturesEnabled: false,
+      markers: _markers.values.toSet(),
     );
   }
 }
@@ -176,7 +189,7 @@ class SearchPlace extends StatelessWidget {
 
 class SearchPlaceScreen extends StatefulWidget {
   SearchPlaceScreen({Key key, this.currentLocation}) : super(key: key);
-  final Position currentLocation;
+  final Location currentLocation;
 
   @override
   _SearchPlaceScreenState createState() => _SearchPlaceScreenState();
@@ -185,6 +198,8 @@ class SearchPlaceScreen extends StatefulWidget {
 class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
   TextEditingController _searchController = TextEditingController();
   Timer _debounce;
+  String _sessionToken;
+
   Dio dio = Dio();
   AutoCompleteResult result;
 
@@ -195,6 +210,11 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
   }
 
   void _onSearchChanged() {
+    if (_sessionToken == null) {
+      setState(() {
+        _sessionToken = Uuid().v1();
+      });
+    }
     if (_debounce?.isActive ?? false) _debounce.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
       if (_searchController.text.isNotEmpty) {
@@ -213,8 +233,10 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
         "key": PLACES_API_KEY,
         "offset": 3,
         "type": "address",
+        "sessionToken": _sessionToken,
+        "radius": 30000,
         "location": widget.currentLocation != null
-            ? '${widget.currentLocation.latitude},${widget.currentLocation.longitude}'
+            ? '${widget.currentLocation.lat},${widget.currentLocation.lng}'
             : null
       };
 
@@ -239,15 +261,19 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
     final String url =
         'https://maps.googleapis.com/maps/api/place/details/json';
     try {
+      print(placeId);
       final queryParameters = {
-        "placeId": placeId,
+        "place_id": placeId,
+        "key": PLACES_API_KEY,
       };
       Response response = await dio.get(
         url,
         queryParameters: queryParameters,
       );
 
-      print(response.data);
+      if (response.data != null) {
+        Get.back(result: PlaceDetail.fromJson(response.data['result']));
+      }
     } on DioError catch (e) {
       print(e.error);
       print(e.response?.data);

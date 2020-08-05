@@ -29,7 +29,10 @@ class Place {
 
 @JsonSerializable(fieldRename: FieldRename.snake, explicitToJson: true)
 class MatchedSubstrings {
-  MatchedSubstrings({this.length, this.offset});
+  MatchedSubstrings({
+    this.length,
+    this.offset,
+  });
 
   int length;
   int offset;
